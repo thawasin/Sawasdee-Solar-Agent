@@ -1,3 +1,0 @@
-flask
-line-bot-sdk
-gunicorn
