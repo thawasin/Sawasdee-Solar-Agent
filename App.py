@@ -21,7 +21,7 @@ line_bot_api = LineBotApi(LINE_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
 
 print(f"=== Sawasdee Solar Agent Starting ===")
-print(f"TOKEN set: {len(LINE_TOKEN)} chars, starts with {LINE_TOKEN[:10]}...")
+print(f"TOKEN set: {len(LINE_TOKEN)} chars")
 print(f"SECRET set: {len(LINE_SECRET)} chars")
 
 user_data = {}
@@ -121,14 +121,14 @@ def build_flex_message(result, location_text=""):
 def callback():
     signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
-    print(f"Webhook received: {body[:500]}")
+    print(f"Webhook received: {body[:300]}")
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        print("Invalid signature error - check LINE_SECRET")
+        print("Invalid signature - check LINE_SECRET")
         abort(400)
     except Exception as e:
-        print(f"Error in callback: {e}")
+        print(f"Callback error: {e}")
         traceback.print_exc()
     return 'OK'
 
@@ -141,10 +141,8 @@ def safe_reply(reply_token, messages):
         line_bot_api.reply_message(reply_token, messages)
     except LineBotApiError as e:
         print(f"LineBotApiError: {e}")
-        # If reply token invalid (expired), we can't reply, but don't crash
-        # Log it and return OK so LINE doesn't retry forever
         if "Invalid reply token" in str(e):
-            print("Reply token expired or already used - Render cold start too slow")
+            print("Reply token expired - Render cold start")
     except Exception as e:
         print(f"Reply error: {e}")
         traceback.print_exc()
@@ -153,7 +151,7 @@ def safe_reply(reply_token, messages):
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
-    print(f"Received text from {user_id}: {text}")
+    print(f"Received: {text}")
     if text.replace(',', '').replace(' ', '').isdigit():
         try:
             bill = int(text.replace(',', '').replace(' ', ''))
@@ -162,26 +160,25 @@ def handle_text(event):
                 user_data[user_id] = result
                 flex = build_flex_message(result)
                 safe_reply(event.reply_token, [
-                    TextSendMessage(text=f"รับบิล {bill:,} บาทแล้วครับ กำลังวิเคราะห์หลังคา..."),
+                    TextSendMessage(text=f"รับบิล {bill:,} บาทแล้วครับ กำลังวิเคราะห์..."),
                     flex
                 ])
                 return
         except Exception as e:
-            print(f"Calculate error: {e}")
+            print(f"Calc error: {e}")
             pass
     if "ใบเสนอราคา" in text:
         result = user_data.get(user_id)
         if result:
-            safe_reply(event.reply_token, TextSendMessage(text=f"📄 ใบเสนอราคาระบบ {result['system_kw']}kW\nราคา {result['cost']:,} บาท\n\nสวัสดีโซลาร์ 095-774-4978\nฟรีขออนุญาตการไฟฟ้า + ผ่อน 0%\n\nทีมงานจะติดต่อกลับใน 10 นาทีครับ"))
+            safe_reply(event.reply_token, TextSendMessage(text=f"📄 ใบเสนอราคาระบบ {result['system_kw']}kW ราคา {result['cost']:,} บาท\n\nสวัสดีโซลาร์ 095-774-4978\nฟรีขออนุญาตการไฟฟ้า + ผ่อน 0%"))
         else:
-            safe_reply(event.reply_token, TextSendMessage(text="ส่งบิลค่าไฟมาก่อนนะครับ เช่น พิมพ์ 4500 หรือส่งรูปบิลมาได้เลยครับ"))
+            safe_reply(event.reply_token, TextSendMessage(text="ส่งบิลค่าไฟมาก่อนนะครับ เช่น พิมพ์ 4500"))
     else:
-        safe_reply(event.reply_token, TextSendMessage(text="สวัสดีครับ ☀️ สวัสดีโซลาร์\n\nส่งบิลค่าไฟมาได้เลยครับ (รูปหรือพิมพ์ตัวเลข เช่น 4500)\nแล้วแชร์โลเคชั่นหลังคา ผมจะคำนวณให้ทันทีว่า\nจากค่าไฟเท่าไหร่ เหลือเท่าไหร่ คืนทุนกี่ปี\n\n📞 095-774-4978 | 080-8989-353"))
+        safe_reply(event.reply_token, TextSendMessage(text="สวัสดีครับ ☀️ สวัสดีโซลาร์\n\nส่งบิลค่าไฟมาได้เลยครับ (พิมพ์ตัวเลข เช่น 4500)\nแล้วแชร์โลเคชั่นหลังคา ผมจะคำนวณให้ทันที\n\n📞 095-774-4978"))
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
-    print(f"Received image from {event.source.user_id}")
-    safe_reply(event.reply_token, TextSendMessage(text="ได้รับรูปบิลแล้วครับ 🙏 (ระบบกำลังอ่าน)\n\nช่วยพิมพ์ยอดค่าไฟต่อเดือนเป็นตัวเลขด้วยครับ เช่น 4500\nแล้วแชร์โลเคชั่นหลังคา ผมจะคำนวณขนาดระบบให้ทันทีครับ"))
+    safe_reply(event.reply_token, TextSendMessage(text="ได้รับรูปบิลแล้วครับ 🙏 พิมพ์ยอดค่าไฟ เช่น 4500 แล้วแชร์โลเคชั่นหลังคาได้เลยครับ"))
 
 @handler.add(MessageEvent, message=LocationMessage)
 def handle_location(event):
@@ -190,15 +187,14 @@ def handle_location(event):
     lat = event.message.latitude
     lng = event.message.longitude
     addr = event.message.address or f"{lat},{lng}"
-    print(f"Received location: {addr}")
     if result:
         flex = build_flex_message(result, location_text=f"📍 {addr}")
         safe_reply(event.reply_token, [
-            TextSendMessage(text=f"ได้รับพิกัดแล้วครับ {addr}\nกำลังวัดพื้นที่หลังคาจากดาวเทียม..."),
+            TextSendMessage(text=f"ได้รับพิกัด {addr} แล้วครับ"),
             flex
         ])
     else:
-        safe_reply(event.reply_token, TextSendMessage(text=f"ได้รับพิกัด {addr} แล้วครับ\nตอนนี้ช่วยส่งบิลค่าไฟมาด้วยนะครับ จะได้คำนวณให้ตรงครับ"))
+        safe_reply(event.reply_token, TextSendMessage(text=f"ได้รับพิกัด {addr} แล้วครับ ส่งบิลค่าไฟมาด้วยนะครับ"))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
