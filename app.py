@@ -124,14 +124,27 @@ def handle_text(reply_token,user_id,text):
                 ])
                 return
         except Exception as e: print(f"Calc error {e}")
+    if "คำนวณราคา" in text or "คำนวนราคา" in text:
+        reply_message(reply_token,[{"type":"text","text":"💰 คำนวณราคาโซลาร์ฟรีครับ ☀️\n\nส่งบิลค่าไฟมาได้เลยครับ (พิมพ์ตัวเลข เช่น 4500 หรือส่งรูปบิล)\nแล้วแชร์โลเคชั่นหลังคา ผมจะคำนวณให้ทันทีว่า\n- ต้องติดกี่ kW กี่แผง\n- จากค่าไฟเท่าไหร่ เหลือเท่าไหร่\n- ประหยัดเดือนละกี่บาท\n- คืนทุนกี่ปี\n\n📞 095-774-4978"}])
+        return
+    if "ดูผลงาน" in text:
+        reply_message(reply_token,[
+            {"type":"text","text":"🏠 ดูผลงานติดตั้งจริงของสวัสดีโซลาร์ครับ\nรวมบ้านเดี่ยว โรงงาน ฟาร์ม กว่า 500 หลังคา"},
+            {"type":"text","text":"🌐 เว็บไซต์: https://www.sawasdeesolarcell.com\n📸 ดูรูปผลงานล่าสุดได้เลยครับ"}
+        ])
+        return
+    if "ติดต่อเรา" in text or "ติดต่อ" in text:
+        reply_message(reply_token,[{"type":"text","text":"📞 ติดต่อสวัสดีโซลาร์\n\n☎️ โทร: 095-774-4978 / 080-8989-353\n💬 LINE: @sawasdeesolar\n🌐 เว็บ: sawasdeesolarcell.com\n📍 สมุทรสาคร - ติดตั้งทั่วไทย\n\nนัดสำรวจฟรี ไม่มีค่าใช้จ่ายครับ!"}])
+        return
     if "ใบเสนอราคา" in text:
         result=user_data.get(user_id)
         if result:
-            reply_message(reply_token,[{"type":"text","text":f"📄 ใบเสนอราคาระบบ {result['system_kw']}kW ราคา {result['cost']:,} บาท\nสวัสดีโซลาร์ 095-774-4978"}])
+            reply_message(reply_token,[{"type":"text","text":f"📄 ใบเสนอราคาระบบ {result['system_kw']}kW ราคา {result['cost']:,} บาท\nสวัสดีโซลาร์ 095-774-4978\nฟรีขออนุญาตการไฟฟ้า + ผ่อน 0%"}])
         else:
-            reply_message(reply_token,[{"type":"text","text":"ส่งบิลค่าไฟมาก่อนนะครับ เช่น 4500"}])
+            reply_message(reply_token,[{"type":"text","text":"ส่งบิลค่าไฟมาก่อนนะครับ เช่น พิมพ์ 4500 แล้วกดขอใบเสนอราคาได้เลยครับ"}])
+        return
     else:
-        reply_message(reply_token,[{"type":"text","text":"สวัสดีครับ ☀️ สวัสดีโซลาร์\nส่งบิลค่าไฟมาได้เลยครับ (พิมพ์ตัวเลข เช่น 4500)\nแล้วแชร์โลเคชั่นหลังคา ผมจะคำนวณให้ทันที\n📞 095-774-4978"}])
+        reply_message(reply_token,[{"type":"text","text":"สวัสดีครับ ☀️ สวัสดีโซลาร์\n\nส่งบิลค่าไฟมาได้เลยครับ (พิมพ์ตัวเลข เช่น 4500)\nแล้วแชร์โลเคชั่นหลังคา ผมจะคำนวณให้ทันทีว่า\nจากค่าไฟเท่าไหร่ เหลือเท่าไหร่ คืนทุนกี่ปี\n\n📞 095-774-4978 | 080-8989-353"}])
 
 def handle_location(reply_token,user_id,address):
     result=user_data.get(user_id)
