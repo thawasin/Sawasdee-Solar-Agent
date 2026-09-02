@@ -21,8 +21,7 @@ line_bot_api = LineBotApi(LINE_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
 
 print(f"=== Sawasdee Solar Agent Starting ===")
-print(f"TOKEN set: {len(LINE_TOKEN)} chars")
-print(f"SECRET set: {len(LINE_SECRET)} chars")
+print(f"TOKEN len: {len(LINE_TOKEN)}, SECRET len: {len(LINE_SECRET)}")
 
 user_data = {}
 
@@ -121,11 +120,11 @@ def build_flex_message(result, location_text=""):
 def callback():
     signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
-    print(f"Webhook received: {body[:300]}")
+    print(f"Webhook hit: {body[:300]}")
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        print("Invalid signature - check LINE_SECRET")
+        print("Invalid signature")
         abort(400)
     except Exception as e:
         print(f"Callback error: {e}")
@@ -141,8 +140,6 @@ def safe_reply(reply_token, messages):
         line_bot_api.reply_message(reply_token, messages)
     except LineBotApiError as e:
         print(f"LineBotApiError: {e}")
-        if "Invalid reply token" in str(e):
-            print("Reply token expired - Render cold start")
     except Exception as e:
         print(f"Reply error: {e}")
         traceback.print_exc()
@@ -151,7 +148,7 @@ def safe_reply(reply_token, messages):
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
-    print(f"Received: {text}")
+    print(f"Text: {text}")
     if text.replace(',', '').replace(' ', '').isdigit():
         try:
             bill = int(text.replace(',', '').replace(' ', ''))
@@ -165,12 +162,12 @@ def handle_text(event):
                 ])
                 return
         except Exception as e:
-            print(f"Calc error: {e}")
+            print(f"Calc error {e}")
             pass
     if "ใบเสนอราคา" in text:
         result = user_data.get(user_id)
         if result:
-            safe_reply(event.reply_token, TextSendMessage(text=f"📄 ใบเสนอราคาระบบ {result['system_kw']}kW ราคา {result['cost']:,} บาท\n\nสวัสดีโซลาร์ 095-774-4978\nฟรีขออนุญาตการไฟฟ้า + ผ่อน 0%"))
+            safe_reply(event.reply_token, TextSendMessage(text=f"📄 ใบเสนอราคาระบบ {result['system_kw']}kW ราคา {result['cost']:,} บาท\n\nสวัสดีโซลาร์ 095-774-4978"))
         else:
             safe_reply(event.reply_token, TextSendMessage(text="ส่งบิลค่าไฟมาก่อนนะครับ เช่น พิมพ์ 4500"))
     else:
@@ -178,7 +175,7 @@ def handle_text(event):
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
-    safe_reply(event.reply_token, TextSendMessage(text="ได้รับรูปบิลแล้วครับ 🙏 พิมพ์ยอดค่าไฟ เช่น 4500 แล้วแชร์โลเคชั่นหลังคาได้เลยครับ"))
+    safe_reply(event.reply_token, TextSendMessage(text="ได้รับรูปบิลแล้วครับ 🙏 พิมพ์ยอดค่าไฟ เช่น 4500 แล้วแชร์โลเคชั่นได้เลยครับ"))
 
 @handler.add(MessageEvent, message=LocationMessage)
 def handle_location(event):
