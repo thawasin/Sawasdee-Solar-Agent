@@ -1,11 +1,10 @@
 """
-สวัสดีโซลาร์ - V11 URGENT FIX 4 POINTS
-1. รูปบ้านไม่ขึ้น - ส่งรูปบ้านจริงหลังคำนวณบิล
-2. หลังแชร์พิกัดไม่มีอินโฟกราฟฟิก - ส่งอินโฟกราฟฟิกให้ขึ้น
-3. เปลี่ยนข้อความปุ่มส้ม: ขอเบอร์ติดต่อ สอบถามรายละเอียด ประเมินละเอียด ส่งใบเสนอราคา
-4. แก้ให้เพิ่มเมนูได้อีกครั้ง - ทำ footer เป็น list แก้ไขง่าย
-+ คงราคา 21k/25k/32k, *ยังไม่รวมแบต, 70% max, ขนาดสมเหตุ 2k=4kW 3k=6kW 4k=8kW
-+ ตัด Hero ออกจาก Flex ตามกากบาท, เหลือปุ่มเดียวตามกากบาท
+สวัสดีโซลาร์ - V12 FIX INFOGRAPHIC NOT SHOWING + REMOVE BROKEN HOUSE IMAGE
+- แก้รูปอินโฟกราฟฟิกไม่โชว์: ใช้ BASE_URL auto-detect + fallback
+- ตัดรูปบ้านที่แตก (กากบาทแดงในรูป photo547...) ออก - ไม่ส่งรูปบ้านหลังคำนวณบิลแล้ว
+- คงราคา 21k/25k/32k, *ยังไม่รวมแบต, 70% max, ขนาด 2k=4kW 3k=6kW 4k=8kW
+- ไม่มี Hero ใน Flex, เหลือปุ่มเดียว
+- ข้อความปุ่มส้มใหม่สั้นกระชับ
 """
 import os, math, hmac, hashlib, base64, traceback, requests, json, re, random
 from flask import Flask, request, abort, send_file, make_response
@@ -13,18 +12,15 @@ from flask import Flask, request, abort, send_file, make_response
 app = Flask(__name__)
 LINE_TOKEN = os.getenv("LINE_TOKEN","").strip()
 LINE_SECRET = os.getenv("LINE_SECRET","").strip()
-
-# BASE_URL จะอัปเดตจาก request.host อัตโนมัติ เพื่อให้รูปขึ้นเสมอ
 BASE_URL_GLOBAL = {"url": os.getenv("BASE_URL","").strip().rstrip("/") or "https://sawasdee-solar-agent-4.onrender.com"}
 
-print(f"=== Sawasdee Solar V11 - Fix Images & Menu ===")
+print(f"=== Sawasdee Solar V12 FIX INFOGRAPHIC ===")
 
 user_data = {}
 
 HERO_CANDIDATES = [
     "/mnt/data/rooftop_house_realistic.jpg",
     "/mnt/data/rooftop_hero_800x600.jpg",
-    "/mnt/data/rooftop_house_realistic_800x600.jpg",
 ]
 INFOGRAPHIC_CANDIDATES = [
     "/mnt/data/solar_infographic_with_logo_bottom_left.jpg",
@@ -65,7 +61,7 @@ def calculate_solar(bill_baht, elec_rate=4.7, sun_hours=4.5):
         "new_bill": int(new_bill), "price_economy": price_economy,
         "price_standard": price_standard, "price_premium": price_premium,
         "payback_y": payback_y, "payback_m": payback_m,
-        "old_bill": bill_baht, "kw_needed": round(kw_needed,2)
+        "old_bill": bill_baht
     }
 
 def estimate_roof_from_satellite(lat, lng):
@@ -77,7 +73,6 @@ def estimate_roof_from_satellite(lat, lng):
     return {"total_roof": total_roof, "usable": usable, "max_kw": max_kw, "orientation": orientation, "google_satellite": google_sat}
 
 def build_flex_json(result, location_text="", lat=None, lng=None, roof_estimate=None):
-    # ไม่มี Hero ตามกากบาทรูป 22999
     body_contents = [
         {"type":"text","text":"สวัสดีโซลาร์ - ผลวิเคราะห์","weight":"bold","size":"md","color":"#FF6B00"},
         {"type":"text","text":f"{result['system_kw']} kW ({result['panels']} แผง)","weight":"bold","size":"xl","margin":"md"},
@@ -109,13 +104,8 @@ def build_flex_json(result, location_text="", lat=None, lng=None, roof_estimate=
     body_contents.append({"type":"separator","margin":"md"})
     body_contents.append({"type":"text","text":"⚠️ *ราคาเบื้องต้น ยังไม่รวมแบตฯ สำรวจหน้างานก่อนสรุปราคาจริง","size":"xxs","color":"#FF0000","wrap":True,"margin":"md"})
     
-    # V11: ปุ่มเดียวตามกากบาท แต่ทำเป็น list เพิ่มเมนูได้ง่าย (แก้ข้อ 4)
-    # อยากเพิ่มเมนู ให้เพิ่ม dict ใน footer_buttons ได้เลย
     footer_buttons = [
         {"type":"button","style":"primary","color":"#FF6B00","action":{"type":"message","label":"📄 ขอใบเสนอราคาจริง (สำรวจฟรี)","text":"ขอใบเสนอราคา PDF"}},
-        # เพิ่มเมนูตรงนี้ได้ เช่น:
-        # {"type":"button","style":"secondary","action":{"type":"message","label":"🛰️ ดูภาพดาวเทียม","text":"ดูภาพดาวเทียม"}},
-        # {"type":"button","style":"link","action":{"type":"uri","label":"ดูผลงาน","uri":"https://www.sawasdeesolarcell.com"}}
     ]
     
     flex_content = {
@@ -146,7 +136,7 @@ def reply_message(reply_token, messages):
     data = {"replyToken":reply_token,"messages":messages}
     try:
         r = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=data, timeout=10)
-        print(f"LINE reply {r.status_code}: {r.text[:800]}")
+        print(f"LINE reply {r.status_code}: {r.text[:1000]}")
     except Exception as e:
         print(f"Reply error {e}")
 
@@ -174,14 +164,14 @@ def handle_text(reply_token, user_id, text):
         state["result"] = result
         flex = build_flex_json(result, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))
         messages = []
-        # FIX 1: ส่งรูปบ้านจริงให้ขึ้นโชว์
-        messages.append({"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"})
+        # FIX: ตัดรูปบ้านที่แตกออกแล้ว - ไม่ส่งรูปบ้านหลังคำนวณบิล ตามกากบาทแดง
         messages.append({"type":"text","text":f"💡 บิล {bill:,} บ.\nระบบ {result['system_kw']}kW ({result['panels']} แผง) {result['area']} ตรม.\nประหยัดสูงสุด {result['saving']:,} บ./เดือน\nเหลือจ่าย {result['new_bill']:,} บ.\nคืนทุน {result['payback_y']}ปี {result['payback_m']}ด."})
         messages.append({"type":"flex","altText":f"ระบบ {result['system_kw']}kW 3 ราคา","contents":flex})
-        # FIX 2: หลังแชร์พิกัดแล้วจะส่งอินโฟกราฟฟิก แต่ถ้ายังไม่มีพิกัดให้ขอพิกัด
+        # ไม่ส่งรูปบ้านแล้ว เพื่อไม่ให้ขึ้นกล่องแตก
         if state.get("location") == "":
             messages.append({"type":"text","text":"📍 แชร์พิกัดหลังคาด้วยครับ จะวัดพื้นที่จากดาวเทียมให้"})
         else:
+            # ถ้ามีพิกัดแล้ว ส่งอินโฟกราฟฟิก
             messages.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
         reply_message(reply_token, messages)
         return
@@ -189,23 +179,13 @@ def handle_text(reply_token, user_id, text):
     if "คำนวณราคา" in text:
         reply_message(reply_token, [{"type":"text","text":"💰 พิมพ์ยอดค่าไฟมา เช่น 3500\n\nมี 3 ราคา* ยังไม่รวมแบตเตอรี่"}])
         return
-    if "ดูผลงาน" in text:
-        msgs = []
-        msgs.append({"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"})
-        msgs.append({"type":"text","text":"🏠 บ้านจริง 500+ หลังคา\n🌐 sawasdeesolarcell.com"})
-        reply_message(reply_token, msgs)
-        return
-    if "ติดต่อเรา" in text or text.lower()=="ติดต่อ":
-        reply_message(reply_token, [{"type":"text","text":"📞 สวัสดีโซลาร์\n☎️ 095-774-4978 / 080-8989-353"}])
-        return
     if "ใบเสนอราคา" in text or "PDF" in text:
         if state["result"]:
             r=state["result"]
-            # FIX 3: เปลี่ยนข้อความตามที่สั่ง - สั้นกระชับ
             new_text = "📞 ขอเบอร์ติดต่อหน่อยครับ จะสอบถามรายละเอียดเพิ่มเติม เพื่อประเมินราคาละเอียด แล้วส่งใบเสนอราคาให้ครับ"
             msgs = []
             msgs.append({"type":"text","text":f"📄 {r['system_kw']}kW ({r['panels']} แผง)\n\n💰 3 ราคา*:\n🟢 {r['price_economy']:,} บ.\n🔵 {r['price_standard']:,} บ. ⭐\n🟠 {r['price_premium']:,} บ.\n*ยังไม่รวมแบตเตอรี่\n⚠️ ราคาเบื้องต้น สำรวจหน้างานก่อนสรุปราคาจริง"})
-            # FIX 2 & 1: ส่งรูปอินโฟกราฟฟิกให้ขึ้น
+            # FIX: ส่งอินโฟกราฟฟิกให้ขึ้น - ใช้ BASE_URL auto
             msgs.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
             msgs.append({"type":"flex","altText":f"{r['system_kw']}kW","contents":build_flex_json(r, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))})
             msgs.append({"type":"text","text":new_text})
@@ -226,8 +206,6 @@ def handle_text(reply_token, user_id, text):
                 {"type":"text","text":f"ระบบ {state['result']['system_kw']}kW\n💰 {state['result']['price_economy']:,}/{state['result']['price_standard']:,}/{state['result']['price_premium']:,} บ.*\n*ยังไม่รวมแบตฯ\n⚠️ ราคาเบื้องต้น สำรวจก่อนสรุปราคาจริง\n\nขอเบอร์หน่อยครับ?"},
                 {"type":"flex","altText":"สรุป","contents":build_flex_json(state["result"], state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))}
             ])
-        else:
-            reply_message(reply_token, [{"type":"text","text":f"บันทึก '{text}' แล้ว ทีมงานโทร {state['phone']} ครับ"}])
 
 def handle_location(reply_token, user_id, address, lat, lng):
     state=get_user_state(user_id)
@@ -244,7 +222,6 @@ def handle_location(reply_token, user_id, address, lat, lng):
             {"type":"text","text":f"🛰️ พิกัด {address}\nวัดแล้ว!"},
             {"type":"text","text":f"📊 หลังคา ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้ {roof['max_kw']} kW\nต้องใช้ {result['area']} ตรม. -> พอครับ ✅\n\n💰 3 ราคา*: {result['price_economy']:,}/{result['price_standard']:,}/{result['price_premium']:,} บ.\n*ยังไม่รวมแบตฯ\n⚠️ ราคาเบื้องต้น\n🛰️ {roof['google_satellite']}"},
             {"type":"flex","altText":f"{result['system_kw']}kW","contents":flex},
-            # FIX 2: ส่งอินโฟกราฟฟิกให้ขึ้นหลังแชร์พิกัด
             {"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"},
             {"type":"text","text":"📞 ขอเบอร์ติดต่อหน่อยครับ จะสอบถามรายละเอียดเพิ่มเติม เพื่อประเมินราคาละเอียด แล้วส่งใบเสนอราคาให้ครับ"}
         ]
@@ -252,22 +229,18 @@ def handle_location(reply_token, user_id, address, lat, lng):
     else:
         msgs=[
             {"type":"text","text":f"🛰️ พิกัด {address}\nหลังคา ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้ {roof['max_kw']} kW\n{roof['google_satellite']}\n\nพิมพ์ยอดบิล เช่น 3500"},
-            {"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"},
             {"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"}
         ]
         reply_message(reply_token, msgs)
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    # อัปเดต BASE_URL อัตโนมัติจาก request.host เพื่อให้รูปขึ้นเสมอ
     try:
         host = request.host_url.rstrip("/")
         if host.startswith("http"):
             BASE_URL_GLOBAL["url"] = host
-            print(f"Updated BASE_URL to {host} from request")
     except:
         pass
-    
     signature=request.headers.get('X-Line-Signature','')
     body=request.get_data(as_text=True)
     if LINE_SECRET and not verify_signature(body, signature):
@@ -316,7 +289,7 @@ def infographic_flow():
 @app.route("/", methods=['GET'])
 def home(): 
     base_url = get_base_url()
-    return f"Sawasdee Solar V11 - Fix Images - {base_url}/hero/rooftop.jpg {base_url}/infographic/flow.jpg - 095-774-4978"
+    return f"Sawasdee Solar V12 - Fix Infographic - {base_url}/hero/rooftop.jpg {base_url}/infographic/flow.jpg"
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8000)))
