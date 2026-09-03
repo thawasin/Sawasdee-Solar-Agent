@@ -1,10 +1,12 @@
 """
-สวัสดีโซลาร์ - V12 FIX INFOGRAPHIC NOT SHOWING + REMOVE BROKEN HOUSE IMAGE
-- แก้รูปอินโฟกราฟฟิกไม่โชว์: ใช้ BASE_URL auto-detect + fallback
-- ตัดรูปบ้านที่แตก (กากบาทแดงในรูป photo547...) ออก - ไม่ส่งรูปบ้านหลังคำนวณบิลแล้ว
-- คงราคา 21k/25k/32k, *ยังไม่รวมแบต, 70% max, ขนาด 2k=4kW 3k=6kW 4k=8kW
+สวัสดีโซลาร์ - V13 FIX IMAGE NOT SHOWING - REMOVE BROKEN IMAGE MESSAGES
+- แก้รูปไม่ขึ้น: ตัดการส่งรูปภาพแบบ Image Message ออกทั้งหมด (ต้นเหตุกล่องแตก)
+- รูปบ้านที่แตกและรูปอินโฟกราฟฟิกที่แตก - ไม่ส่งเป็น Image Message แล้ว
+- ใช้แค่ Text + Flex เท่านั้น ไม่มีรูปแตกอีก
+- ถ้าต้องการดูรูป ให้เปิดลิงก์ /infographic/flow.jpg ในเบราว์เซอร์ได้ แต่ไม่ส่งในแชท LINE
+- คงราคา 21k/25k/32k, *ยังไม่รวมแบต, 70% max, ขนาดสมเหตุ 2k=4kW 3k=6kW 4k=8kW
 - ไม่มี Hero ใน Flex, เหลือปุ่มเดียว
-- ข้อความปุ่มส้มใหม่สั้นกระชับ
+- ข้อความขอเบอร์ใหม่สั้นกระชับ
 """
 import os, math, hmac, hashlib, base64, traceback, requests, json, re, random
 from flask import Flask, request, abort, send_file, make_response
@@ -14,18 +16,12 @@ LINE_TOKEN = os.getenv("LINE_TOKEN","").strip()
 LINE_SECRET = os.getenv("LINE_SECRET","").strip()
 BASE_URL_GLOBAL = {"url": os.getenv("BASE_URL","").strip().rstrip("/") or "https://sawasdee-solar-agent-4.onrender.com"}
 
-print(f"=== Sawasdee Solar V12 FIX INFOGRAPHIC ===")
+print(f"=== Sawasdee Solar V13 - NO BROKEN IMAGES ===")
 
 user_data = {}
 
-HERO_CANDIDATES = [
-    "/mnt/data/rooftop_house_realistic.jpg",
-    "/mnt/data/rooftop_hero_800x600.jpg",
-]
-INFOGRAPHIC_CANDIDATES = [
-    "/mnt/data/solar_infographic_with_logo_bottom_left.jpg",
-    "/mnt/data/solar_infographic_with_logo_800px.jpg",
-]
+HERO_CANDIDATES = ["/mnt/data/rooftop_house_realistic.jpg", "/mnt/data/rooftop_hero_800x600.jpg"]
+INFOGRAPHIC_CANDIDATES = ["/mnt/data/solar_infographic_with_logo_bottom_left.jpg"]
 
 def get_base_url():
     return BASE_URL_GLOBAL["url"]
@@ -142,7 +138,6 @@ def reply_message(reply_token, messages):
 
 def handle_text(reply_token, user_id, text):
     state = get_user_state(user_id)
-    base_url = get_base_url()
     
     bill_match = re.search(r'(\d{3,6})', text.replace(",",""))
     bill = None
@@ -164,15 +159,11 @@ def handle_text(reply_token, user_id, text):
         state["result"] = result
         flex = build_flex_json(result, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))
         messages = []
-        # FIX: ตัดรูปบ้านที่แตกออกแล้ว - ไม่ส่งรูปบ้านหลังคำนวณบิล ตามกากบาทแดง
+        # V13: ไม่ส่งรูปบ้านแล้ว ตัดออก - ส่งแค่ข้อความ + Flex เท่านั้น ไม่มีรูปแตก
         messages.append({"type":"text","text":f"💡 บิล {bill:,} บ.\nระบบ {result['system_kw']}kW ({result['panels']} แผง) {result['area']} ตรม.\nประหยัดสูงสุด {result['saving']:,} บ./เดือน\nเหลือจ่าย {result['new_bill']:,} บ.\nคืนทุน {result['payback_y']}ปี {result['payback_m']}ด."})
         messages.append({"type":"flex","altText":f"ระบบ {result['system_kw']}kW 3 ราคา","contents":flex})
-        # ไม่ส่งรูปบ้านแล้ว เพื่อไม่ให้ขึ้นกล่องแตก
         if state.get("location") == "":
             messages.append({"type":"text","text":"📍 แชร์พิกัดหลังคาด้วยครับ จะวัดพื้นที่จากดาวเทียมให้"})
-        else:
-            # ถ้ามีพิกัดแล้ว ส่งอินโฟกราฟฟิก
-            messages.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
         reply_message(reply_token, messages)
         return
     
@@ -185,8 +176,7 @@ def handle_text(reply_token, user_id, text):
             new_text = "📞 ขอเบอร์ติดต่อหน่อยครับ จะสอบถามรายละเอียดเพิ่มเติม เพื่อประเมินราคาละเอียด แล้วส่งใบเสนอราคาให้ครับ"
             msgs = []
             msgs.append({"type":"text","text":f"📄 {r['system_kw']}kW ({r['panels']} แผง)\n\n💰 3 ราคา*:\n🟢 {r['price_economy']:,} บ.\n🔵 {r['price_standard']:,} บ. ⭐\n🟠 {r['price_premium']:,} บ.\n*ยังไม่รวมแบตเตอรี่\n⚠️ ราคาเบื้องต้น สำรวจหน้างานก่อนสรุปราคาจริง"})
-            # FIX: ส่งอินโฟกราฟฟิกให้ขึ้น - ใช้ BASE_URL auto
-            msgs.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
+            # V13: ไม่ส่งรูปอินโฟกราฟฟิกเป็น Image Message แล้ว - ตัดออกเพื่อไม่ให้แตก
             msgs.append({"type":"flex","altText":f"{r['system_kw']}kW","contents":build_flex_json(r, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))})
             msgs.append({"type":"text","text":new_text})
             reply_message(reply_token, msgs)
@@ -215,21 +205,19 @@ def handle_location(reply_token, user_id, address, lat, lng):
     roof=estimate_roof_from_satellite(lat, lng)
     state["roof"]=roof
     result=state.get("result")
-    base_url = get_base_url()
     if result:
         flex=build_flex_json(result, f"📍 {address}", lat, lng, roof)
         msgs=[
             {"type":"text","text":f"🛰️ พิกัด {address}\nวัดแล้ว!"},
             {"type":"text","text":f"📊 หลังคา ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้ {roof['max_kw']} kW\nต้องใช้ {result['area']} ตรม. -> พอครับ ✅\n\n💰 3 ราคา*: {result['price_economy']:,}/{result['price_standard']:,}/{result['price_premium']:,} บ.\n*ยังไม่รวมแบตฯ\n⚠️ ราคาเบื้องต้น\n🛰️ {roof['google_satellite']}"},
             {"type":"flex","altText":f"{result['system_kw']}kW","contents":flex},
-            {"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"},
+            # V13: ไม่ส่งรูปอินโฟกราฟฟิกแล้ว ตัดออก
             {"type":"text","text":"📞 ขอเบอร์ติดต่อหน่อยครับ จะสอบถามรายละเอียดเพิ่มเติม เพื่อประเมินราคาละเอียด แล้วส่งใบเสนอราคาให้ครับ"}
         ]
         reply_message(reply_token, msgs)
     else:
         msgs=[
             {"type":"text","text":f"🛰️ พิกัด {address}\nหลังคา ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้ {roof['max_kw']} kW\n{roof['google_satellite']}\n\nพิมพ์ยอดบิล เช่น 3500"},
-            {"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"}
         ]
         reply_message(reply_token, msgs)
 
@@ -289,7 +277,7 @@ def infographic_flow():
 @app.route("/", methods=['GET'])
 def home(): 
     base_url = get_base_url()
-    return f"Sawasdee Solar V12 - Fix Infographic - {base_url}/hero/rooftop.jpg {base_url}/infographic/flow.jpg"
+    return f"Sawasdee Solar V13 NO BROKEN IMAGES - {base_url}/hero/rooftop.jpg {base_url}/infographic/flow.jpg - 095-774-4978"
 
 if __name__=="__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8000)))
+    app.run(host="0.0.0.0", port=int(os.e
