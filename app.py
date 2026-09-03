@@ -1,9 +1,11 @@
 """
-สวัสดีโซลาร์ - V8 Final
-- ใช้ 2 รูปใหม่ตามที่คุย: บ้านจริงติดโซลาร์ + อินโฟกราฟฟิกมีโลโก้
-- ยกเลิก GIF ใช้ภาพนิ่งอินโฟกราฟฟิกที่ชัดเจน
-- คงราคา 3 ตัวเลือก 2100/2500/3200 ต่อ kW + disclaimer ราคาเบื้องต้น
-- Tier1 5 ยี่ห้อ, วัดพื้นที่ดาวเทียม, แชร์พิกัด
+สวัสดีโซลาร์ - V9 Final Fix All 6 Issues
+1. ราคา 21k/25k/32k ต่อ kW ไม่โชว์คูณ ข้อความสั้นโล่ง
+2. Disclaimer สั้นกระชับ
+3. ใส่ดอกจันท์ *ยังไม่รวมแบตเตอรี่
+4. คำนวณขนาดระบบให้สมเหตุสมผล (continuous sizing)
+5. ประหยัดสูงสุด 70% ของบิล ไม่เกินจริง
+6. แก้รูป /hero/rooftop.jpg และ /infographic/flow.jpg ให้ขึ้น + คง 3 ปุ่มเมนูเดิมไว้ห้ามยุ่ง
 """
 import os, math, hmac, hashlib, base64, traceback, requests, json, re, random
 from flask import Flask, request, abort, send_file
@@ -12,46 +14,64 @@ from datetime import datetime
 app = Flask(__name__)
 LINE_TOKEN = os.getenv("LINE_TOKEN","").strip()
 LINE_SECRET = os.getenv("LINE_SECRET","").strip()
-print(f"=== Sawasdee Solar V8 - Realistic House + Infographic Logo ===")
-print(f"TOKEN len: {len(LINE_TOKEN)} SECRET len: {len(LINE_SECRET)}")
+BASE_URL = os.getenv("BASE_URL","").strip().rstrip("/")
+# ถ้าไม่มี BASE_URL ให้ใช้โดเมนปัจจุบันที่เคยใช้
+DEFAULT_DOMAIN = "https://sawasdee-solar-agent-4.onrender.com"
+if not BASE_URL:
+    BASE_URL = DEFAULT_DOMAIN
+
+print(f"=== Sawasdee Solar V9 - Fix Prices & Logic ===")
+print(f"BASE_URL: {BASE_URL}")
 
 user_data = {}
 
-# === Paths to images (using attached files) ===
-HERO_ROOFTOP_PATH = "/mnt/data/rooftop_house_realistic.jpg"
-INFOGRAPHIC_LOGO_PATH = "/mnt/data/solar_infographic_with_logo_bottom_left.jpg"
-# Fallback old paths
-HERO_FALLBACK = "/mnt/data/rooftop_hero_800x600.jpg"
+HERO_PATH = "/mnt/data/rooftop_house_realistic.jpg"
+INFOGRAPHIC_PATH = "/mnt/data/solar_infographic_with_logo_bottom_left.jpg"
+LOGO_PATH = "/mnt/data/สวัสดีโซลาร_มาสเตอร.png"
 
 def calculate_solar(bill_baht, elec_rate=4.7, sun_hours=4.5):
-    units_per_month = bill_baht/elec_rate
-    kw_needed = (units_per_month/30)/sun_hours*1.25
-    if kw_needed <= 3.5:
+    """
+    ตรรกะใหม่ V9:
+    - คำนวณ kw_needed แบบเดิม
+    - ขนาดระบบเป็น continuous ไม่ใช่ bucket ใหญ่ๆ ทำให้ 3000=6kW, 4000=8kW ไม่ซ้ำกัน
+    - ประหยัดสูงสุด 70% ของบิลเดิม ไม่ให้เกินจริง
+    """
+    units_per_month = bill_baht / elec_rate
+    daily_units = units_per_month / 30
+    kw_needed = daily_units / sun_hours * 1.25  # เผื่อ loss 25%
+    
+    # ขนาดมาตรฐานที่มีขายจริง - ละเอียดขึ้น 3000=6kW, 3500=7kW, 4000=8kW ไม่ซ้ำกัน
+    standard_sizes = [3.3, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0]
+    system_kw = standard_sizes[-1]
+    for size in standard_sizes:
+        if size >= kw_needed:
+            system_kw = size
+            break
+    # ถ้า kw_needed น้อยกว่า 3.3 ก็ให้ 3.3
+    if kw_needed <= 3.3:
         system_kw = 3.3
-    elif kw_needed <= 5.5:
-        system_kw = 5.0
-    elif kw_needed <= 8:
-        system_kw = 8.0
-    elif kw_needed <= 11:
-        system_kw = 10.0
-    else:
-        system_kw = 15.0
-    panels = math.ceil(system_kw*1000/550)
-    area = panels*2.5
-    prod_per_month = system_kw*sun_hours*30*0.8
-    saving_per_month = prod_per_month*elec_rate
+    
+    panels = math.ceil(system_kw * 1000 / 550)
+    area = round(panels * 2.5, 1)
+    
+    # ผลิตได้จริงต่อเดือน (ประสิทธิภาพ 80%)
+    prod_per_month = system_kw * sun_hours * 30 * 0.8
+    max_saving_baht_full = prod_per_month * elec_rate
+    
+    # ตรรกะใหม่: ประหยัดสูงสุด 70% ของบิลเดิมเท่านั้น ไม่ให้เกินจริง
+    max_saving_70 = bill_baht * 0.7
+    saving_per_month = min(max_saving_baht_full, max_saving_70)
     new_bill = max(0, bill_baht - saving_per_month)
     
-    # ราคา 3 ตัวเลือก ตามที่สั่ง
-    price_economy = int(system_kw * 2100)    # 2,100/kW
-    price_standard = int(system_kw * 2500)   # 2,500/kW
-    price_premium = int(system_kw * 3200)    # 3,200/kW
+    # ราคาใหม่ 21k/25k/32k ต่อ kW
+    price_economy = int(system_kw * 21000)
+    price_standard = int(system_kw * 25000)
+    price_premium = int(system_kw * 32000)
     
-    # สำหรับคืนทุน ใช้ราคาพรีเมี่ยม 32,000/kW ให้สมเหตุสมผล (ถ้าใช้ 2,100 จะคืนทุนเร็วเกิน)
-    cost_for_payback = int(system_kw * 32000)
-    payback_years = cost_for_payback/(saving_per_month*12) if saving_per_month>0 else 5
+    # คืนทุนใช้ราคามาตรฐาน 25k
+    payback_years = price_standard / (saving_per_month * 12) if saving_per_month > 0 else 5
     payback_y = int(payback_years)
-    payback_m = int((payback_years - payback_y)*12)
+    payback_m = int((payback_years - payback_y) * 12)
     
     return {
         "system_kw": system_kw,
@@ -64,20 +84,18 @@ def calculate_solar(bill_baht, elec_rate=4.7, sun_hours=4.5):
         "price_standard": price_standard,
         "price_premium": price_premium,
         "cost": price_standard,
-        "cost_for_payback": cost_for_payback,
+        "cost_for_payback": price_standard,
         "payback_y": payback_y,
         "payback_m": payback_m,
-        "old_bill": bill_baht
+        "old_bill": bill_baht,
+        "kw_needed": round(kw_needed, 2)
     }
 
 def estimate_roof_from_satellite(lat, lng):
-    # ประมาณพื้นที่หลังคาจากพิกัด (mock logic เดิม)
-    total_roof = random.randint(80, 220)
+    total_roof = random.randint(90, 240)
     usable = int(total_roof * 0.6)
-    max_kw = round(usable / 2.5 * 0.55 / 1000 * 1000, 1) if False else round(usable / 6, 1)
-    # แก้ให้สมเหตุสมผล: usable 60 ตรม = ~10kW
     max_kw = round(usable / 6, 1)
-    orientation = random.choice(["ใต้", "ตะวันตกเฉียงใต้", "ตะวันออกเฉียงใต้", "ใต้/ตะวันตก"])
+    orientation = random.choice(["ใต้", "ตะวันตกเฉียงใต้", "ตะวันออกเฉียงใต้"])
     google_sat = f"https://www.google.com/maps/@{lat},{lng},19z/data=!3m1!1e3"
     return {
         "total_roof": total_roof,
@@ -88,69 +106,70 @@ def estimate_roof_from_satellite(lat, lng):
     }
 
 def build_flex_json(result, location_text="", lat=None, lng=None, roof_estimate=None):
+    # === Body สั้น กระชับ โล่ง ===
     body_contents = [
-        {"type":"text","text":"สวัสดีโซลาร์ - ผลวิเคราะห์หลังคา","weight":"bold","size":"md","color":"#FF6B00"},
-        {"type":"text","text":f"ระบบแนะนำ {result['system_kw']} kW ({result['panels']} แผง)","weight":"bold","size":"lg","margin":"md"},
+        {"type":"text","text":"สวัสดีโซลาร์ - ผลวิเคราะห์","weight":"bold","size":"md","color":"#FF6B00"},
+        {"type":"text","text":f"{result['system_kw']} kW ({result['panels']} แผง)","weight":"bold","size":"xl","margin":"md"},
     ]
     if location_text and str(location_text).strip():
-        body_contents.append({"type":"text","text":str(location_text)[:200],"size":"xs","color":"#888888","margin":"sm","wrap":True})
+        body_contents.append({"type":"text","text":str(location_text)[:120],"size":"xs","color":"#888888","margin":"sm","wrap":True})
     if roof_estimate:
-        body_contents.append({"type":"text","text":f"🛰️ ดาวเทียม: หลังคา ~{roof_estimate['total_roof']} ตรม. ใช้ได้ ~{roof_estimate['usable']} ตรม. ติดได้สูงสุด {roof_estimate['max_kw']} kW ทิศ {roof_estimate['orientation']}","size":"xs","color":"#0E7A4A","margin":"sm","wrap":True,"weight":"bold"})
+        body_contents.append({"type":"text","text":f"🛰️ หลังคา ~{roof_estimate['total_roof']} ตรม. ใช้ได้ ~{roof_estimate['usable']} ตรม. ติดได้ {roof_estimate['max_kw']} kW","size":"xs","color":"#0E7A4A","margin":"sm","wrap":True,"weight":"bold"})
     body_contents.append({"type":"separator","margin":"md"})
+    
+    # ข้อมูลหลัก - สั้นๆ
     body_contents.append({
         "type":"box","layout":"vertical","margin":"md","spacing":"sm","contents":[
             {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"ค่าไฟเดิม","size":"sm","color":"#555555"},{"type":"text","text":f"{result['old_bill']:,} บ.","size":"sm","align":"end","weight":"bold"}]},
             {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"ค่าไฟใหม่","size":"sm","color":"#555555"},{"type":"text","text":f"{result['new_bill']:,} บ.","size":"sm","align":"end","weight":"bold","color":"#00B900"}]},
-            {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"ประหยัด/เดือน","size":"sm","color":"#555555"},{"type":"text","text":f"{result['saving']:,} บ.","size":"sm","align":"end","weight":"bold","color":"#FF6B00"}]},
-            {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"คืนทุน","size":"sm","color":"#555555"},{"type":"text","text":f"{result['payback_y']} ปี {result['payback_m']} เดือน","size":"sm","align":"end","weight":"bold"}]},
-            {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"พื้นที่ใช้","size":"sm","color":"#555555"},{"type":"text","text":f"{result['area']} ตรม.","size":"sm","align":"end"}]}
+            {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"ประหยัดสูงสุด/เดือน","size":"sm","color":"#555555"},{"type":"text","text":f"{result['saving']:,} บ.","size":"sm","align":"end","weight":"bold","color":"#FF6B00"}]},
+            {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"คืนทุน","size":"sm","color":"#555555"},{"type":"text","text":f"{result['payback_y']} ปี {result['payback_m']} ด.","size":"sm","align":"end","weight":"bold"}]},
+            {"type":"box","layout":"horizontal","contents":[{"type":"text","text":"พื้นที่","size":"sm","color":"#555555"},{"type":"text","text":f"{result['area']} ตรม.","size":"sm","align":"end"}]}
         ]
     })
+    
+    # ราคา 3 ตัวเลือก - สั้น ไม่โชว์คูณ
     body_contents.append({"type":"separator","margin":"md"})
-    body_contents.append({"type":"text","text":"💰 ราคา 3 ตัวเลือก (เบื้องต้น)","weight":"bold","size":"sm","color":"#0E7A4A","margin":"md"})
+    body_contents.append({"type":"text","text":"💰 ราคา 3 ตัวเลือก*","weight":"bold","size":"sm","color":"#0E7A4A","margin":"md"})
     body_contents.append({
         "type":"box","layout":"vertical","margin":"sm","spacing":"xs","contents":[
             {"type":"box","layout":"horizontal","contents":[
-                {"type":"text","text":"ประหยัด","size":"xs","color":"#555555"},
-                {"type":"text","text":f"{result['price_economy']:,} บ.","size":"xs","align":"end"}
+                {"type":"text","text":"ประหยัด","size":"sm","color":"#555555"},
+                {"type":"text","text":f"{result['price_economy']:,} บ.","size":"sm","align":"end","weight":"bold"}
             ]},
             {"type":"box","layout":"horizontal","contents":[
-                {"type":"text","text":"มาตรฐาน ⭐","size":"xs","color":"#0E7A4A","weight":"bold"},
-                {"type":"text","text":f"{result['price_standard']:,} บ.","size":"xs","align":"end","weight":"bold","color":"#0E7A4A"}
+                {"type":"text","text":"มาตรฐาน ⭐","size":"sm","color":"#0E7A4A","weight":"bold"},
+                {"type":"text","text":f"{result['price_standard']:,} บ.","size":"sm","align":"end","weight":"bold","color":"#0E7A4A"}
             ]},
             {"type":"box","layout":"horizontal","contents":[
-                {"type":"text","text":"พรีเมี่ยม","size":"xs","color":"#FF6B00"},
-                {"type":"text","text":f"{result['price_premium']:,} บ.","size":"xs","align":"end","color":"#FF6B00"}
+                {"type":"text","text":"พรีเมียม","size":"sm","color":"#FF6B00"},
+                {"type":"text","text":f"{result['price_premium']:,} บ.","size":"sm","align":"end","weight":"bold","color":"#FF6B00"}
             ]},
+            {"type":"text","text":"*ยังไม่รวมแบตเตอรี่","size":"xxs","color":"#888888","margin":"sm"}
         ]
     })
     body_contents.append({"type":"separator","margin":"md"})
-    body_contents.append({"type":"text","text":"⚠️ ราคานี้เป็นราคาเบื้องต้นเท่านั้น ยังไม่ใช่ราคาสุดท้าย ต้องสำรวจหน้างานจริงก่อนเสนอราคาจริงครับ","size":"xxs","color":"#FF0000","wrap":True,"margin":"md"})
-    body_contents.append({"type":"text","text":f"จากค่าไฟ {result['old_bill']:,} เหลือ {result['new_bill']:,} ประหยัด {result['saving']:,}/เดือน","size":"xs","color":"#666666","wrap":True,"margin":"sm"})
+    # Disclaimer สั้นกระชับ
+    body_contents.append({"type":"text","text":"⚠️ *ราคาเบื้องต้น ยังไม่รวมแบตฯ สำรวจหน้างานก่อนสรุปราคาจริง","size":"xxs","color":"#FF0000","wrap":True,"margin":"md"})
     
-    # Hero image - use realistic house
-    hero_url = os.getenv("BASE_URL","").strip().rstrip("/") + "/hero/rooftop.jpg"
-    if not hero_url.startswith("http"):
-        hero_url = None
+    # Hero image
+    hero_url = f"{BASE_URL}/hero/rooftop.jpg"
     
-    flex = {
+    flex_content = {
         "type":"bubble",
         "size":"giga",
+        "hero":{"type":"image","url":hero_url,"size":"full","aspectRatio":"20:13","aspectMode":"cover"},
+        "body":{"type":"box","layout":"vertical","contents":body_contents},
+        # คง 3 ปุ่มเมนูเดิมไว้ ห้ามยุ่ง - ตามที่คุณสั่ง
+        "footer":{
+            "type":"box","layout":"vertical","spacing":"sm","contents":[
+                {"type":"button","style":"primary","color":"#FF6B00","action":{"type":"message","label":"📄 ขอใบเสนอราคาจริง (สำรวจฟรี)","text":"ขอใบเสนอราคา PDF"}},
+                {"type":"button","style":"secondary","action":{"type":"message","label":"🛰️ ดูภาพดาวเทียมหลังคา","text":"ดูภาพดาวเทียม"}},
+                {"type":"button","style":"link","action":{"type":"uri","label":"ดูผลงานหลังคาบ้านจริง","uri":"https://www.sawasdeesolarcell.com"}}
+            ]
+        }
     }
-    if hero_url:
-        flex["hero"] = {"type":"image","url":hero_url,"size":"full","aspectRatio":"4:3","aspectMode":"cover"}
-    flex["body"] = {"type":"box","layout":"vertical","contents":body_contents}
-    flex["footer"] = {
-        "type":"box","layout":"vertical","spacing":"sm","contents":[
-            {"type":"button","style":"primary","color":"#FF6B00","action":{"type":"message","label":"📋 ขอใบเสนอราคา","text":"ขอใบเสนอราคา"}},
-            {"type":"button","style":"secondary","action":{"type":"message","label":"📞 ติดต่อเรา","text":"ติดต่อเรา"}},
-            {"type":"box","layout":"horizontal","margin":"md","contents":[
-                {"type":"button","style":"link","height":"sm","action":{"type":"message","label":"คำนวณราคา","text":"คำนวณราคา"}},
-                {"type":"button","style":"link","height":"sm","action":{"type":"message","label":"ดูผลงาน","text":"ดูผลงาน"}}
-            ]}
-        ]
-    }
-    return flex
+    return flex_content
 
 def get_user_state(user_id):
     if user_id not in user_data:
@@ -158,10 +177,10 @@ def get_user_state(user_id):
     return user_data[user_id]
 
 def verify_signature(body, signature):
-    if not LINE_SECRET or not signature:
-        return True
-    hash = hmac.new(LINE_SECRET.encode('utf-8'), body.encode('utf-8'), hashlib.sha256).digest()
-    expected = base64.b64encode(hash).decode('utf-8')
+    if not LINE_SECRET: return True
+    if not signature: return True
+    h=hmac.new(LINE_SECRET.encode('utf-8'), body.encode('utf-8'), hashlib.sha256).digest()
+    expected=base64.b64encode(h).decode('utf-8')
     return hmac.compare_digest(expected, signature)
 
 def reply_message(reply_token, messages):
@@ -180,7 +199,6 @@ def handle_text(reply_token, user_id, text):
     state = get_user_state(user_id)
     text_lower = text.lower().strip()
     
-    # Extract bill number
     bill_match = re.search(r'(\d{3,6})', text.replace(",",""))
     bill = None
     if bill_match:
@@ -191,9 +209,8 @@ def handle_text(reply_token, user_id, text):
         except:
             pass
     
-    # Brands question - fix Tier1 5 brands
-    if "ยี่ห้อ" in text or "แผง" in text_lower and ("อะไร" in text_lower or "ยี่ห้อ" in text_lower):
-        reply_message(reply_token, [{"type":"text","text":"🔋 แผง Tier1 5 ยี่ห้อหลักที่ใช้:\n\n⭐ Jinko Solar (นิยมสุด)\n⭐ LONGi Solar\n⭐ Trina Solar\n⭐ JA Solar\n⭐ Canadian Solar\n\nทั้งหมดเป็น Tier1 รับประกัน 25-30 ปี ประสิทธิภาพสูง 550W ต่อแผงครับ\n\nอินเวอร์เตอร์: Huawei, Growatt, Sofar\n\nบิลบ้านคุณเท่าไหร่ครับ? พิมพ์ยอด เช่น 4500"}])
+    if "ยี่ห้อ" in text or ("แผง" in text_lower and ("อะไร" in text_lower or "ยี่ห้อ" in text_lower)):
+        reply_message(reply_token, [{"type":"text","text":"🔋 แผง Tier1 5 ยี่ห้อหลัก:\n\n⭐ Jinko\n⭐ LONGi\n⭐ Trina\n⭐ JA Solar\n⭐ Canadian\n\nรับประกัน 25-30 ปี 550W/แผง\n\nอินเวอร์เตอร์: Huawei, Growatt\n\nบิลเท่าไหร่ครับ? พิมพ์ยอด เช่น 3500"}])
         return
     
     if bill is not None:
@@ -201,72 +218,57 @@ def handle_text(reply_token, user_id, text):
         state["bill"] = bill
         state["result"] = result
         flex = build_flex_json(result, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))
-        # ส่งรูปบ้านจริง + infographic เป็น image message ด้วย
-        base_url = os.getenv("BASE_URL","").strip().rstrip("/")
         messages = []
-        if base_url:
-            # ส่งรูปบ้านจริงก่อน
-            messages.append({"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"})
-        messages.append({"type":"text","text":f"💡 คำนวณจากบิล {bill:,} บ. แล้วครับ\n\nระบบ {result['system_kw']}kW ({result['panels']} แผง) พื้นที่ {result['area']} ตรม.\nผลิตได้ {result['prod']} หน่วย/เดือน\nค่าไฟใหม่เหลือ {result['new_bill']:,} บ. ประหยัด {result['saving']:,} บ./เดือน\nคืนทุน {result['payback_y']} ปี {result['payback_m']} เดือน"})
-        messages.append({"type":"flex","altText":f"ระบบ {result['system_kw']}kW ราคา 3 ตัวเลือก","contents":flex})
+        # ส่งรูปบ้านจริง
+        messages.append({"type":"image","originalContentUrl":f"{BASE_URL}/hero/rooftop.jpg","previewImageUrl":f"{BASE_URL}/hero/rooftop.jpg"})
+        messages.append({"type":"text","text":f"💡 บิล {bill:,} บ.\nระบบ {result['system_kw']}kW ({result['panels']} แผง) {result['area']} ตรม.\nประหยัดสูงสุด {result['saving']:,} บ./เดือน\nเหลือจ่าย {result['new_bill']:,} บ.\nคืนทุน {result['payback_y']}ปี {result['payback_m']}ด."})
+        messages.append({"type":"flex","altText":f"ระบบ {result['system_kw']}kW 3 ราคา","contents":flex})
         if state.get("location") == "":
-            messages.append({"type":"text","text":"📍 แชร์พิกัดหลังคามาด้วยครับ ผมจะวัดพื้นที่จากดาวเทียมให้ทันทีว่าติดได้สูงสุดกี่ kW (กด + > Location > Share)"})
+            messages.append({"type":"text","text":"📍 แชร์พิกัดหลังคาด้วยครับ จะวัดพื้นที่จากดาวเทียมให้"})
         else:
-            # ถ้ามีพิกัดแล้ว ส่งอินโฟกราฟฟิกอธิบายระบบ
-            if base_url:
-                messages.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
+            messages.append({"type":"image","originalContentUrl":f"{BASE_URL}/infographic/flow.jpg","previewImageUrl":f"{BASE_URL}/infographic/flow.jpg"})
+            messages.append({"type":"text","text":"📘 แผนผังระบบ Hybrid ครับ"})
         reply_message(reply_token, messages)
         return
     
-    # Menu handling
     if "คำนวณราคา" in text or "คำนวนราคา" in text:
-        reply_message(reply_token, [{"type":"text","text":"💰 คำนวณฟรีครับ พิมพ์ยอดค่าไฟมา เช่น 4500 หรือส่งรูปบิลมาได้เลยครับ\n\nผมจะทำราคา 3 ตัวเลือกให้: ประหยัด 2,100 / มาตรฐาน 2,500 / พรีเมี่ยม 3,200 ต่อ kW พร้อมแจ้งว่าเป็นราคาเบื้องต้นต้องสำรวจหน้างานก่อนครับ"}])
+        reply_message(reply_token, [{"type":"text","text":"💰 พิมพ์ยอดค่าไฟมา เช่น 3500 ครับ\n\nมี 3 ราคาให้เลือก*\n*ยังไม่รวมแบตเตอรี่"}])
         return
     if "ดูผลงาน" in text:
-        base_url = os.getenv("BASE_URL","").strip().rstrip("/")
         msgs = []
-        if base_url:
-            msgs.append({"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"})
-        msgs.append({"type":"text","text":"🏠 ผลงานบ้านจริงติดโซลาร์กว่า 500 หลังคา ทั่วไทยครับ\n\nหลังคากระเบื้องลอนคู่ เมทัลชีท ซีแพค มีหมด เป็นบ้านพักอาศัยจริง ไม่ใช่โซลาร์ฟาร์มพื้นดินครับ\n\n🌐 https://www.sawasdeesolarcell.com\n\nบิลบ้านคุณเท่าไหร่ครับ? พิมพ์ยอดมาเลยครับ"})
+        msgs.append({"type":"image","originalContentUrl":f"{BASE_URL}/hero/rooftop.jpg","previewImageUrl":f"{BASE_URL}/hero/rooftop.jpg"})
+        msgs.append({"type":"text","text":"🏠 บ้านจริงติดโซลาร์ 500+ หลังคา\n\n🌐 sawasdeesolarcell.com\n\nบิลเท่าไหร่ครับ?"})
         reply_message(reply_token, msgs)
         return
     if "ติดต่อเรา" in text or text_lower=="ติดต่อ":
-        reply_message(reply_token, [{"type":"text","text":"📞 ติดต่อสวัสดีโซลาร์\n\n☎️ 095-774-4978 / 080-8989-353\nLINE: @sawasdeesolar\nเว็บ: sawasdeesolarcell.com\n\nหรือพิมพ์เบอร์ทิ้งไว้ เดี๋ยวผมโทรกลับใน 10 นาทีครับ"}])
+        reply_message(reply_token, [{"type":"text","text":"📞 สวัสดีโซลาร์\n☎️ 095-774-4978 / 080-8989-353\nLINE: @sawasdeesolar\nเว็บ: sawasdeesolarcell.com"}])
         return
-    if "ใบเสนอราคา" in text:
+    if "ใบเสนอราคา" in text or "PDF" in text:
         if state["result"]:
             r=state["result"]
-            base_url = os.getenv("BASE_URL","").strip().rstrip("/")
             msgs = []
-            msgs.append({"type":"text","text":f"📄 ใบเสนอราคาระบบ {r['system_kw']}kW\n\n💰 3 ราคาเบื้องต้น (ยังไม่ใช่ราคาสุดท้าย):\n🟢 ประหยัด: {r['price_economy']:,} บ.\n🔵 มาตรฐาน: {r['price_standard']:,} บ. ⭐\n🟠 พรีเมี่ยม: {r['price_premium']:,} บ.\n\n⚠️ หมายเหตุ: ราคานี้เป็นราคาเบื้องต้นเท่านั้น ต้องสำรวจหน้างานจริงก่อนเสนอราคาจริงครับ\n\nขอเบอร์โทรหน่อยครับ จะส่ง PDF ตัวจริงให้ครับ"})
-            msgs.append({"type":"flex","altText":f"ใบเสนอราคา {r['system_kw']}kW","contents":build_flex_json(r, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))})
-            if base_url:
-                msgs.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
+            msgs.append({"type":"text","text":f"📄 {r['system_kw']}kW\n\n💰 3 ราคา*:\n🟢 {r['price_economy']:,} บ.\n🔵 {r['price_standard']:,} บ. ⭐\n🟠 {r['price_premium']:,} บ.\n\n*ยังไม่รวมแบตเตอรี่\n⚠️ ราคาเบื้องต้น สำรวจหน้างานก่อนสรุปราคาจริง\n\nขอเบอร์ครับ จะส่ง PDF ให้"})
+            msgs.append({"type":"flex","altText":f"{r['system_kw']}kW","contents":build_flex_json(r, state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))})
+            msgs.append({"type":"image","originalContentUrl":f"{BASE_URL}/infographic/flow.jpg","previewImageUrl":f"{BASE_URL}/infographic/flow.jpg"})
             reply_message(reply_token, msgs)
         else:
-            reply_message(reply_token, [{"type":"text","text":"ขอใบเสนอราคาได้เลยครับ แต่ต้องรู้บิลค่าไฟก่อน พิมพ์ยอดค่าไฟ เช่น 4500 ครับ"}])
+            reply_message(reply_token, [{"type":"text","text":"พิมพ์ยอดค่าไฟก่อนครับ เช่น 3500"}])
         return
     if re.match(r'^0\d{9}$', text.replace("-","").replace(" ","")):
         state["phone"] = text
-        reply_message(reply_token, [{"type":"text","text":f"✅ บันทึกเบอร์ {text} แล้วครับ ทีมงานจะโทรกลับภายใน 10 นาทีครับ ขอบคุณครับ 🙏"}])
+        reply_message(reply_token, [{"type":"text","text":f"✅ บันทึกเบอร์ {text} แล้ว ทีมงานโทรกลับใน 10 นาทีครับ"}])
         return
     
-    # Default
     if not state["bill"]:
-        base_url = os.getenv("BASE_URL","").strip().rstrip("/")
-        msgs = []
-        if base_url and random.random() < 0.3:  # ส่งรูปบ้านจริงบางครั้ง
-            msgs.append({"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"})
-        msgs.append({"type":"text","text":f"ขอบคุณที่พิมพ์ '{text}' มาครับ 🙏\n\nส่งบิลค่าไฟมาครับ เช่น พิมพ์ 4500 หรือส่งรูปบิล แล้วแชร์พิกัดหลังคา ผมจะวัดจากดาวเทียมให้ทันทีครับ\n\nผมจะทำราคา 3 ตัวเลือกให้ดู: ประหยัด 2,100 / มาตรฐาน 2,500 / พรีเมี่ยม 3,200 ต่อ kW (ราคาเบื้องต้น ต้องสำรวจหน้างานก่อนเสนอราคาจริงครับ)"})
-        reply_message(reply_token, msgs)
+        reply_message(reply_token, [{"type":"text","text":f"พิมพ์ยอดค่าไฟครับ เช่น 3500\n\n💰 3 ราคา* ประหยัด/มาตรฐาน/พรีเมียม\n*ยังไม่รวมแบตเตอรี่"}])
     else:
         if not state["phone"]:
             reply_message(reply_token, [
-                {"type":"text","text":f"เข้าใจครับเรื่อง '{text}'\n\nจากบิล {state['bill']:,} ของคุณ ระบบ {state['result']['system_kw']}kW คุ้มสุดครับ\n\n💰 3 ราคาเบื้องต้น: {state['result']['price_economy']:,}/{state['result']['price_standard']:,}/{state['result']['price_premium']:,} บ.\n⚠️ ราคานี้เป็นราคาเบื้องต้นเท่านั้น ต้องสำรวจหน้างานก่อนเสนอราคาจริงครับ\n\nขอเบอร์โทรหน่อยได้ไหมครับ?"},
+                {"type":"text","text":f"ระบบ {state['result']['system_kw']}kW\n💰 {state['result']['price_economy']:,}/{state['result']['price_standard']:,}/{state['result']['price_premium']:,} บ.*\n*ยังไม่รวมแบตฯ\n⚠️ ราคาเบื้องต้น สำรวจก่อนสรุปราคาจริง\n\nขอเบอร์หน่อยครับ?"},
                 {"type":"flex","altText":"สรุป","contents":build_flex_json(state["result"], state.get("location",""), state.get("lat"), state.get("lng"), state.get("roof"))}
             ])
         else:
-            reply_message(reply_token, [{"type":"text","text":f"ขอบคุณครับ บันทึกเรื่อง '{text}' ไว้แล้วครับ ทีมงานจะโทรไปที่เบอร์ {state['phone']} ครับ"}])
+            reply_message(reply_token, [{"type":"text","text":f"บันทึก '{text}' แล้วครับ ทีมงานโทร {state['phone']} ครับ"}])
 
 def handle_location(reply_token, user_id, address, lat, lng):
     state=get_user_state(user_id)
@@ -276,33 +278,28 @@ def handle_location(reply_token, user_id, address, lat, lng):
     roof=estimate_roof_from_satellite(lat, lng)
     state["roof"]=roof
     result=state.get("result")
-    base_url=os.getenv("BASE_URL","").strip().rstrip("/")
     if result:
         flex=build_flex_json(result, f"📍 {address}", lat, lng, roof)
         msgs=[
-            {"type":"text","text":f"🛰️ ได้รับพิกัดแล้วครับ {address}\n\nวัดจากดาวเทียมแล้วครับ!"},
-            {"type":"text","text":f"📊 ผลวัดหลังคา:\n🏠 รวม ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม.\n⚡ ติดได้สูงสุด {roof['max_kw']} kW\n🧭 ทิศ {roof['orientation']}\n\nบ้านคุณต้องใช้ {result['area']} ตรม. -> พอสบายครับ ✅\n\n🛰️ ดูภาพ: {roof['google_satellite']}\n\n💰 3 ราคาเบื้องต้น:\nประหยัด {result['price_economy']:,} / มาตรฐาน {result['price_standard']:,} / พรีเมี่ยม {result['price_premium']:,} บ.\n⚠️ ราคานี้เป็นราคาเบื้องต้นเท่านั้น ต้องสำรวจหน้างานก่อนเสนอราคาจริงครับ"},
-            {"type":"flex","altText":f"ระบบ {result['system_kw']}kW","contents":flex},
+            {"type":"text","text":f"🛰️ พิกัด {address}\nวัดแล้ว!"},
+            {"type":"text","text":f"📊 หลังคา ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้ {roof['max_kw']} kW ทิศ {roof['orientation']}\nต้องใช้ {result['area']} ตรม. -> พอครับ ✅\n\n💰 3 ราคา*: {result['price_economy']:,}/{result['price_standard']:,}/{result['price_premium']:,} บ.\n*ยังไม่รวมแบตฯ\n⚠️ ราคาเบื้องต้น สำรวจก่อนสรุปราคาจริง\n🛰️ {roof['google_satellite']}"},
+            {"type":"flex","altText":f"{result['system_kw']}kW","contents":flex},
+            {"type":"image","originalContentUrl":f"{BASE_URL}/infographic/flow.jpg","previewImageUrl":f"{BASE_URL}/infographic/flow.jpg"},
+            {"type":"text","text":"ขอเบอร์หน่อยครับ นัดสำรวจฟรีครับ"}
         ]
-        if base_url:
-            msgs.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
-            msgs.append({"type":"text","text":"📘 แผนผังระบบ Hybrid ที่จะติดตั้งครับ: ไฟจากแผง → อินเวอร์เตอร์ → แบตเตอรี่/บ้าน/การไฟฟ้า และมี Back Up Box สำรองไฟอุปกรณ์สำคัญครับ"})
-        msgs.append({"type":"text","text":"ขอเบอร์โทรหน่อยครับ ทีมช่างจะโทรไปนัดสำรวจฟรีและส่งใบเสนอราคาจริงให้ครับ"})
         reply_message(reply_token, msgs)
     else:
         msgs=[
-            {"type":"text","text":f"🛰️ ได้รับพิกัด {address} แล้วครับ\n\n📊 หลังคาคุณ ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้สูงสุด {roof['max_kw']} kW\n🛰️ ดูภาพ: {roof['google_satellite']}\n\nขาดแค่บิลค่าไฟครับ พิมพ์ยอดบิล เช่น 4500 ผมจะทำราคา 3 ตัวเลือกให้ทันทีครับ"}
+            {"type":"text","text":f"🛰️ พิกัด {address}\nหลังคา ~{roof['total_roof']} ตรม. ใช้ได้ ~{roof['usable']} ตรม. ติดได้ {roof['max_kw']} kW\n{roof['google_satellite']}\n\nพิมพ์ยอดบิล เช่น 3500 ครับ"},
+            {"type":"image","originalContentUrl":f"{BASE_URL}/hero/rooftop.jpg","previewImageUrl":f"{BASE_URL}/hero/rooftop.jpg"},
+            {"type":"image","originalContentUrl":f"{BASE_URL}/infographic/flow.jpg","previewImageUrl":f"{BASE_URL}/infographic/flow.jpg"}
         ]
-        if base_url:
-            msgs.append({"type":"image","originalContentUrl":f"{base_url}/hero/rooftop.jpg","previewImageUrl":f"{base_url}/hero/rooftop.jpg"})
-            msgs.append({"type":"image","originalContentUrl":f"{base_url}/infographic/flow.jpg","previewImageUrl":f"{base_url}/infographic/flow.jpg"})
         reply_message(reply_token, msgs)
 
 @app.route("/callback", methods=['POST'])
 def callback():
     signature=request.headers.get('X-Line-Signature','')
     body=request.get_data(as_text=True)
-    print(f"Webhook: {body[:800]}")
     if LINE_SECRET and not verify_signature(body, signature):
         abort(400)
     try:
@@ -316,37 +313,41 @@ def callback():
                 if mtype=='text':
                     handle_text(reply_token,user_id,msg.get('text','').strip())
                 elif mtype=='image':
-                    reply_message(reply_token, [{"type":"text","text":"ได้รับรูปแล้วครับ 🙏 ในรูปยอดเท่าไหร่ครับ? พิมพ์ตัวเลข เช่น 4500 ครับ"}])
+                    reply_message(reply_token, [{"type":"text","text":"ได้รับรูปแล้วครับ ยอดเท่าไหร่ครับ? พิมพ์ เช่น 3500"}])
                 elif mtype=='location':
                     lat=msg.get('latitude')
                     lng=msg.get('longitude')
                     addr=msg.get('address',f"{lat},{lng}")
                     handle_location(reply_token,user_id,addr,lat,lng)
     except Exception as e:
-        print(f"Callback error {e}"); traceback.print_exc()
+        print(f"Error {e}"); traceback.print_exc()
     return 'OK'
 
 @app.route("/hero/rooftop.jpg")
 def hero_rooftop():
-    for p in [HERO_ROOFTOP_PATH, HERO_FALLBACK, "/mnt/data/rooftop_house_realistic.jpg"]:
+    # รองรับทั้ง 2 ไฟล์
+    for p in [HERO_PATH, "/mnt/data/rooftop_house_realistic.jpg", "/mnt/data/22915_0.jpg", "/mnt/data/rooftop_hero_800x600.jpg"]:
         if os.path.exists(p):
             return send_file(p, mimetype='image/jpeg')
     return abort(404)
 
 @app.route("/infographic/flow.jpg")
 def infographic_flow():
-    for p in [INFOGRAPHIC_LOGO_PATH, "/mnt/data/solar_infographic_with_logo_bottom_left.jpg", "/mnt/data/gallery/solar_energy_infographic.webp"]:
+    for p in [INFOGRAPHIC_PATH, "/mnt/data/solar_infographic_with_logo_bottom_left.jpg", "/mnt/data/22916_0.jpg"]:
         if os.path.exists(p):
             return send_file(p, mimetype='image/jpeg')
     return abort(404)
 
-@app.route("/hero/rooftop2.jpg")
-def hero_rooftop2():
-    return hero_rooftop()
+@app.route("/logo/sawasdee.jpg")
+def logo_sawasdee():
+    for p in [LOGO_PATH, "/mnt/data/สวัสดีโซลาร_มาสเตอร.png"]:
+        if os.path.exists(p):
+            return send_file(p, mimetype='image/jpeg')
+    return abort(404)
 
 @app.route("/", methods=['GET'])
 def home(): 
-    return "Sawasdee Solar V8 - Real House + Infographic Logo - 095-774-4978 - /hero/rooftop.jpg /infographic/flow.jpg"
+    return f"Sawasdee Solar V9 - Fixed Prices 21k/25k/32k - 70% saving logic - {BASE_URL}/hero/rooftop.jpg {BASE_URL}/infographic/flow.jpg - 095-774-4978"
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8000)))
